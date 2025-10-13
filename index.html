@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portal de Desafíos Dinámicos v5.4</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes slideInUp { from { opacity: 0; transform: translateY(50px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes shake { 0%, 100% { transform: translateX(0); } 10%, 50%, 90% { transform: translateX(-5px); } 30%, 70% { transform: translateX(5px); } }
+        .feedback-incorrect { animation: shake 0.5s ease-in-out; }
+        button:disabled, input:disabled { cursor: not-allowed; opacity: 0.6; }
+        .challenge-card { transition: transform 0.2s, box-shadow 0.2s; }
+        .challenge-card:hover { transform: translateY(-5px); box-shadow: 0 10px 15px -3px rgba(34, 211, 238, 0.1), 0 4px 6px -2px rgba(34, 211, 238, 0.05); }
+        .certificate-gallery-item { transition: transform 0.2s; }
+        .certificate-gallery-item:hover { transform: scale(1.05); }
+        #app-container > div { animation: fadeIn 0.5s ease-in-out; }
+        .option-button.correct { background-color: #22c55e !important; border-color: #16a34a !important; color: white !important; transform: scale(1.05); }
+        .option-button.incorrect { background-color: #ef4444 !important; border-color: #dc2626 !important; color: white !important; }
+        .timer-bar-container { background-color: #374151; border-radius: 8px; overflow: hidden; }
+        .timer-bar { height: 8px; background-color: #22d3ee; }
+        .avatar-selector { cursor: pointer; border: 2px solid transparent; transition: all 0.2s; border-radius: 50%; padding: 4px; }
+        .avatar-selector.selected { border-color: #22d3ee; background-color: rgba(34, 211, 238, 0.2); }
+        .color-selector { cursor: pointer; width: 32px; height: 32px; border-radius: 50%; border: 2px solid transparent; transition: all 0.2s; }
+        .color-selector.selected { border-color: white; transform: scale(1.2); }
+        .podium-item { transition: transform 0.5s ease-out; }
+        .podium-item.first { transform: translateY(-30px); }
+        .podium-item.second { transform: translateY(0px); }
+        .podium-item.third { transform: translateY(20px); }
+        #confetti-canvas { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 100; pointer-events: none; }
+        #achievement-unlocked {
+            position: fixed;
+            bottom: -150px;
+            left: 50%;
+            transform: translateX(-50%);
+            transition: bottom 0.5s ease-in-out;
+            z-index: 200;
+        }
+        #achievement-unlocked.show {
+            bottom: 20px;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white flex flex-col items-center justify-center min-h-screen p-4 overflow-hidden">
+
+    <div id="app-container" class="w-full h-full flex items-center justify-center"></div>
+    <canvas id="confetti-canvas"></canvas>
+    <div id="achievement-unlocked" class="bg-gray-800 border-2 border-amber-400 p-4 rounded-lg shadow-2xl flex items-center gap-4">
+        <div id="achievement-emoji" class="text-4xl"></div>
+        <div>
+            <p class="text-amber-400 font-bold">¡Logro Desbloqueado!</p>
+            <p id="achievement-name" class="text-white"></p>
+        </div>
+    </div>
+    
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, getDocs, orderBy, where, Timestamp, writeBatch, serverTimestamp, addDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyBzDj23rjeO4nQYOU-beGC7aPomfx1krCo",
+            authDomain: "juego-desafios.firebaseapp.com",
+            projectId: "juego-desafios",
+            storageBucket: "juego-desafios.appspot.com",
+            messagingSenderId: "513414920689",
+            appId: "1:513414920689:web:55b5b57ff8c7f53a78ec50",
+            measurementId: "G-DLMT00D4QF"
+        };
+        const appId = 'default-portal-app';
+        const AVATARS = ['👩‍🚀', '👨‍🔬', '👩‍🎨', '👨‍💻', '👩‍✈️', '👨‍🏫', '👩‍🎤', '👨‍🍳', '👩‍🎓', '👨‍⚖️', '👩‍⚕️', '👨‍🚒'];
+        const COLORS = ['#34d399', '#fbbf24', '#60a5fa', '#f87171', '#a78bfa', '#a3e635', '#22d3ee', '#f472b6'];
+        const TIME_PER_QUESTION = 20;
+        const REDUCED_TIME_PER_QUESTION = 10;
+        
+        const LOGO_URL_WEB = 'https://i.imgur.com/2A2p2Ab.png'; 
+        const LOGO_URL_CERTIFICATE = 'https://www.aforecoppel.com/wp_gl/wp-content/uploads/2021/08/logo_afore_coppel.png';
+        const BRAND_BLUE = '#002D72';
+        const BRAND_YELLOW = '#FFD100';
+
+        const achievements = {
+            "velocista": { name: "Velocista", emoji: "⚡️", description: "Contesta 3 preguntas seguidas en menos de 7 segundos." },
+            "precision-absoluta": { name: "Precisión Absoluta", emoji: "🎯", description: "Completa un desafío sin cometer errores." },
+            "maestro-quejas": { name: "Maestro de Quejas", emoji: "🎓", description: "Supera los 1200 puntos en el desafío de quejas." }
+        };
+
+        const appContainer = document.getElementById('app-container');
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        
+        let currentUser = null;
+        let activeGameModule = null;
+        
+        const viewTemplates = {
+            login: `
+                <div id="login-view" class="w-full max-w-sm text-center">
+                    <div class="bg-gray-800 p-8 rounded-2xl shadow-2xl">
+                        <img src="${LOGO_URL_WEB}" alt="Logo de la Empresa" class="h-10 mx-auto mb-6">
+                        <h1 id="login-title" class="text-3xl font-bold" style="color: ${BRAND_YELLOW};">Portal de Desafíos</h1>
+                        <p class="text-gray-300 mb-6">Identifícate para continuar.</p>
+                        <div id="user-login-fields">
+                            <input type="text" id="employee-name-input" placeholder="Nombre Completo" class="w-full bg-gray-700 text-white px-4 py-3 rounded-lg border-2 border-gray-600 focus:outline-none focus:border-cyan-500 transition mb-4">
+                            <input type="text" id="employee-id-input" placeholder="Número de Empleado" class="w-full bg-gray-700 text-white px-4 py-3 rounded-lg border-2 border-gray-600 focus:outline-none focus:border-cyan-500 transition mb-4">
+                        </div>
+                        <div id="admin-login-fields" class="hidden">
+                            <input type="password" id="admin-key-input" placeholder="Clave de Administrador" class="w-full bg-gray-700 text-white px-4 py-3 rounded-lg border-2 border-gray-600 mb-4">
+                        </div>
+                        <button data-action="login" class="w-full bg-cyan-500 hover:bg-cyan-600 text-gray-900 font-bold py-3 px-4 rounded-lg transition">Acceder / Registrar</button>
+                        <p data-action="admin-toggle" class="text-sm text-cyan-400 mt-4 cursor-pointer hover:underline">¿Eres administrador?</p>
+                    </div>
+                </div>`,
+            dashboard: `
+                <div id="dashboard-view" class="w-full max-w-4xl">
+                    <header class="flex justify-between items-center mb-8">
+                        <div>
+                            <h1 class="text-3xl font-bold" style="color: ${BRAND_YELLOW};">Panel de Desafíos</h1>
+                            <p class="text-gray-400">Bienvenido, <span id="dashboard-username" class="font-semibold"></span></p>
+                        </div>
+                        <div>
+                            <button data-action="show-achievements" class="font-bold py-2 px-4 rounded-lg transition mr-4" style="background-color: ${BRAND_BLUE}; color: ${BRAND_YELLOW};">Mi Galería</button>
+                            <button data-action="logout" class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg transition">Salir</button>
+                        </div>
+                    </header>
+                    <main id="challenge-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></main>
+                </div>`,
+            achievements: `
+                <div id="achievements-view" class="w-full max-w-4xl">
+                     <header class="flex justify-between items-center mb-8">
+                        <h1 class="text-3xl font-bold" style="color: ${BRAND_YELLOW};">Mi Galería de Logros</h1>
+                        <button data-action="show-dashboard" class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg transition">‹ Volver al Panel</button>
+                    </header>
+                    <div class="bg-gray-800 p-6 rounded-lg">
+                        <h2 class="text-xl font-bold text-cyan-400 mb-4">Insignias Ganadas</h2>
+                        <main id="badge-gallery" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4 mb-8"></main>
+                        <h2 class="text-xl font-bold text-cyan-400 mb-4 border-t border-gray-700 pt-6">Certificados Obtenidos</h2>
+                        <main id="certificate-gallery" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></main>
+                    </div>
+                </div>`,
+            adminDashboard: `
+                <div id="admin-dashboard-view" class="w-full max-w-5xl">
+                     <header class="flex justify-between items-center mb-8">
+                        <h1 class="text-3xl font-bold text-amber-400">Panel de Administrador</h1>
+                         <button data-action="logout" class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg transition">Salir</button>
+                    </header>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div class="md:col-span-1">
+                             <button data-action="show-create-challenge" class="w-full mb-4 bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-lg transition">+ Crear Desafío</button>
+                             <button data-action="show-admin-users" class="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-lg transition">Supervisar Empleados</button>
+                        </div>
+                        <main id="admin-main-content" class="md:col-span-2 bg-gray-800 p-6 rounded-lg">
+                            <h2 id="admin-content-title" class="text-xl font-semibold mb-4 text-gray-300">Bienvenido, Admin</h2>
+                            <div id="admin-content-area">
+                                <p class="text-gray-400">Selecciona una opción del menú para comenzar.</p>
+                            </div>
+                        </main>
+                    </div>
+                </div>`
+        };
+
+        appContainer.addEventListener('click', handleAppClick);
+
+        function handleAppClick(e) {
+            if (activeGameModule) {
+                activeGameModule.handleGameClick(e);
+                return;
+            }
+
+            const target = e.target.closest('[data-action]');
+            if (!target) return;
+
+            const action = target.dataset.action;
+            
+            switch(action) {
+                case 'login':
+                    const isAdmin = document.getElementById('admin-login-fields') && !document.getElementById('admin-login-fields').classList.contains('hidden');
+                    if (isAdmin) handleAdminLogin();
+                    else handleUserLogin();
+                    break;
+                case 'admin-toggle':
+                    toggleAdminView();
+                    break;
+                case 'logout':
+                    launchPortal();
+                    break;
+                case 'show-dashboard':
+                    renderDashboard();
+                    break;
+                case 'show-achievements':
+                    renderAchievements();
+                    break;
+                case 'show-admin-users':
+                    renderAdminUserList();
+                    break;
+                case 'launch-challenge':
+                    const challengeId = target.dataset.challengeId;
+                    launchChallenge(challengeId);
+                    break;
+                case 'view-user-details':
+                    const userId = target.dataset.userId;
+                    const usersRef = doc(db, `artifacts/${appId}/public/data/users`, userId);
+                    getDoc(usersRef).then(userDoc => {
+                         if(userDoc.exists()) renderAdminUserDetail(userDoc.data());
+                    });
+                    break;
+            }
+        }
+        
+        function toggleAdminView() {
+            const userFields = document.getElementById('user-login-fields');
+            const adminFields = document.getElementById('admin-login-fields');
+            const loginTitle = document.getElementById('login-title');
+            const adminToggle = document.querySelector('[data-action="admin-toggle"]');
+            const loginButton = document.querySelector('[data-action="login"]');
+            
+            if(!userFields || !adminFields || !loginTitle || !adminToggle || !loginButton) return;
+
+            const isUserVisible = !userFields.classList.contains('hidden');
+
+            userFields.classList.toggle('hidden', isUserVisible);
+            adminFields.classList.toggle('hidden', !isUserVisible);
+
+            if (isUserVisible) {
+                loginTitle.textContent = "Acceso de Admin";
+                adminToggle.textContent = "¿Eres empleado?";
+                loginButton.textContent = "Entrar";
+                loginButton.style.backgroundColor = BRAND_YELLOW;
+                loginButton.style.color = BRAND_BLUE;
+            } else {
+                loginTitle.textContent = "Portal de Desafíos";
+                adminToggle.textContent = "¿Eres administrador?";
+                loginButton.textContent = "Acceder / Registrar";
+                loginButton.style.backgroundColor = '';
+                loginButton.style.color = '';
+            }
+        }
+        
+        async function handleUserLogin() {
+            const nameInput = document.getElementById('employee-name-input');
+            const idInput = document.getElementById('employee-id-input');
+            const loginBtn = document.querySelector('[data-action="login"]');
+            const employeeName = nameInput.value.trim();
+            const employeeId = idInput.value.trim();
+
+            if (!employeeName || !employeeId) return alert("Por favor, completa ambos campos.");
+            
+            loginBtn.disabled = true;
+            loginBtn.textContent = 'Accediendo...';
+            
+            try {
+                const userId = employeeId.toLowerCase().replace(/\s+/g, '-');
+                const userRef = doc(db, `artifacts/${appId}/public/data/users`, userId);
+                let userDoc = await getDoc(userRef);
+
+                if (!userDoc.exists()) {
+                    await setDoc(userRef, { id: userId, name: employeeName, employeeId: employeeId, createdAt: serverTimestamp() });
+                    userDoc = await getDoc(userRef);
+                }
+                
+                currentUser = userDoc.data();
+                renderDashboard();
+            } catch (error) {
+                console.error("Error de acceso:", error);
+                alert("Hubo un error al intentar acceder.");
+                loginBtn.disabled = false;
+                loginBtn.textContent = 'Acceder / Registrar';
+            }
+        }
+
+        function handleAdminLogin() {
+            const keyInput = document.getElementById('admin-key-input');
+            if (keyInput.value === '1234') {
+                renderAdminDashboard();
+            } else {
+                alert('Clave de administrador incorrecta.');
+            }
+        }
+        
+        async function launchChallenge(challengeId) {
+             const challengeRef = doc(db, `artifacts/${appId}/public/data/challenges`, challengeId);
+             const challengeDoc = await getDoc(challengeRef);
+             if (!challengeDoc.exists()) return alert("Error: No se pudo encontrar el desafío.");
+             
+             activeGameModule = new GameModule(
+                appContainer,
+                { id: challengeId, ...challengeDoc.data() },
+                currentUser,
+                () => {
+                    activeGameModule = null;
+                    renderDashboard();
+                }
+            );
+            activeGameModule.start();
+        }
+
+        function launchPortal() {
+            currentUser = null;
+            if (activeGameModule) {
+                activeGameModule.cleanup();
+                activeGameModule = null;
+            }
+            appContainer.innerHTML = viewTemplates.login;
+        }
+
+        async function renderDashboard() {
+            appContainer.innerHTML = viewTemplates.dashboard;
+            document.getElementById('dashboard-username').textContent = currentUser.name;
+            const challengeList = document.getElementById('challenge-list');
+            challengeList.innerHTML = `<p class="text-gray-400 col-span-full text-center">Cargando desafíos...</p>`;
+            
+            const challengesRef = collection(db, `artifacts/${appId}/public/data/challenges`);
+            const challengesSnapshot = await getDocs(challengesRef);
+            
+            if (challengesSnapshot.empty) {
+                 challengeList.innerHTML = `<p class="text-gray-400 col-span-full text-center">No hay desafíos disponibles.</p>`;
+                 return;
+            }
+
+            const certificatesRef = collection(db, `artifacts/${appId}/public/data/users/${currentUser.id}/certificates`);
+            const completedSnapshot = await getDocs(certificatesRef);
+            const completedIds = completedSnapshot.docs.map(doc => doc.id);
+
+            challengeList.innerHTML = '';
+            challengesSnapshot.forEach(doc => {
+                const challengeId = doc.id;
+                const challenge = doc.data();
+                const isCompleted = completedIds.includes(challengeId);
+
+                const card = document.createElement('div');
+                card.className = 'challenge-card bg-gray-800 p-6 rounded-lg cursor-pointer';
+                card.dataset.action = 'launch-challenge';
+                card.dataset.challengeId = challengeId;
+                card.innerHTML = `<h2 class="text-xl font-bold mb-2 pointer-events-none">${challenge.title}</h2><p class="text-gray-400 mb-4 h-12 pointer-events-none">${challenge.description}</p><div class="flex justify-between items-center pointer-events-none"><span class="font-bold text-cyan-400">Ver Desafío</span>${isCompleted ? '<span class="bg-green-500 text-white text-xs font-bold px-2 py-1 rounded-full">COMPLETADO</span>' : ''}</div>`;
+                challengeList.appendChild(card);
+            });
+        }
+        
+        async function renderAchievements() {
+            appContainer.innerHTML = viewTemplates.achievements;
+            const certGallery = document.getElementById('certificate-gallery');
+            const badgeGallery = document.getElementById('badge-gallery');
+            certGallery.innerHTML = `<p class="text-gray-400 col-span-full text-center">Cargando...</p>`;
+            badgeGallery.innerHTML = `<p class="text-gray-400 col-span-full text-center">Cargando...</p>`;
+
+            const certsRef = collection(db, `artifacts/${appId}/public/data/users/${currentUser.id}/certificates`);
+            const certsSnapshot = await getDocs(query(certsRef, orderBy("completedAt", "desc")));
+            if (certsSnapshot.empty) {
+                certGallery.innerHTML = `<p class="text-gray-500">Aún no has ganado ningún certificado.</p>`;
+            } else {
+                certGallery.innerHTML = '';
+                certsSnapshot.forEach(doc => {
+                    const certData = doc.data();
+                    const certCard = document.createElement('div');
+                    certCard.className = 'certificate-gallery-item bg-gray-700 p-4 rounded-lg text-center cursor-pointer';
+                    certCard.innerHTML = `<div class="text-5xl mb-2">📜</div><h3 class="font-bold">${certData.challengeTitle}</h3><p class="text-xs text-gray-400">${new Date(certData.completedAt.seconds * 1000).toLocaleDateString()}</p>`;
+                    certGallery.appendChild(certCard);
+                });
+            }
+
+            const achievementsRef = collection(db, `artifacts/${appId}/public/data/users/${currentUser.id}/achievements`);
+            const achievementsSnapshot = await getDocs(query(achievementsRef, orderBy("earnedAt", "desc")));
+             if (achievementsSnapshot.empty) {
+                badgeGallery.innerHTML = `<p class="text-gray-500">Aún no has ganado ninguna insignia.</p>`;
+            } else {
+                badgeGallery.innerHTML = '';
+                achievementsSnapshot.forEach(doc => {
+                    const achievementData = doc.data();
+                    const badgeCard = document.createElement('div');
+                    badgeCard.className = 'bg-gray-700 p-4 rounded-lg text-center flex flex-col items-center'
+                    badgeCard.title = achievementData.description;
+                    badgeCard.innerHTML = `<div class="text-5xl mb-2">${achievementData.emoji}</div><h3 class="font-bold text-sm">${achievementData.name}</h3>`;
+                    badgeGallery.appendChild(badgeCard);
+                });
+            }
+        }
+
+        async function renderAdminDashboard() {
+            appContainer.innerHTML = viewTemplates.adminDashboard;
+        }
+        
+        async function renderAdminUserList() {
+            const contentArea = document.getElementById('admin-content-area');
+            const contentTitle = document.getElementById('admin-content-title');
+            if(!contentArea) return;
+            contentTitle.textContent = "Perfiles de Empleados";
+            contentArea.innerHTML = `<p class="text-gray-400">Cargando usuarios...</p>`;
+
+            const usersRef = collection(db, `artifacts/${appId}/public/data/users`);
+            const usersSnapshot = await getDocs(query(usersRef, orderBy("name")));
+
+            if (usersSnapshot.empty) {
+                contentArea.innerHTML = `<p class="text-gray-400">No hay usuarios registrados.</p>`;
+                return;
+            }
+            
+            contentArea.innerHTML = '<div class="space-y-3"></div>';
+            const userListContainer = contentArea.querySelector('div');
+
+            usersSnapshot.forEach(doc => {
+                const user = doc.data();
+                const userElement = document.createElement('div');
+                userElement.className = 'bg-gray-700 p-4 rounded-lg flex justify-between items-center cursor-pointer hover:bg-gray-600';
+                userElement.dataset.action = 'view-user-details';
+                userElement.dataset.userId = user.id;
+                userElement.innerHTML = `<div class="pointer-events-none"><p class="font-semibold">${user.name}</p><p class="text-sm text-gray-400">ID: ${user.employeeId}</p></div><span class="text-cyan-400 pointer-events-none">Ver Detalles ›</span>`;
+                userListContainer.appendChild(userElement);
+            });
+        }
+
+        async function renderAdminUserDetail(user) {
+            const contentArea = document.getElementById('admin-content-area');
+            const contentTitle = document.getElementById('admin-content-title');
+            contentTitle.innerHTML = `Detalle de: <span class="text-amber-400">${user.name}</span>`;
+            contentArea.innerHTML = `<p class="text-gray-400">Cargando progreso...</p>`;
+
+            const challengesRef = collection(db, `artifacts/${appId}/public/data/challenges`);
+            const challengesSnapshot = await getDocs(challengesRef);
+
+            const certificatesRef = collection(db, `artifacts/${appId}/public/data/users/${user.id}/certificates`);
+            const completedSnapshot = await getDocs(certificatesRef);
+            const completedIds = completedSnapshot.docs.map(doc => doc.id);
+
+            let contentHTML = '<div class="space-y-4">';
+            for (const challengeDoc of challengesSnapshot.docs) {
+                const challengeId = challengeDoc.id;
+                const challenge = challengeDoc.data();
+                const isCompleted = completedIds.includes(challengeId);
+                
+                contentHTML += `<div class="bg-gray-700 p-4 rounded-lg"><div class="flex justify-between items-center"><h4 class="text-lg font-semibold">${challenge.title}</h4>${isCompleted ? `<span class="bg-green-500 text-white text-xs font-bold px-2 py-1 rounded-full">COMPLETADO</span>` : `<span class="bg-gray-500 text-white text-xs font-bold px-2 py-1 rounded-full">PENDIENTE</span>`}</div>`;
+
+                if (isCompleted) {
+                    const attemptsRef = collection(db, `artifacts/${appId}/public/data/users/${user.id}/challenge_attempts/${challengeId}/attempts`);
+                    const attemptsSnapshot = await getDocs(query(attemptsRef, orderBy("timestamp")));
+                    if (!attemptsSnapshot.empty) {
+                        contentHTML += `<div class="mt-4 border-t border-gray-600 pt-3 text-sm space-y-2">`;
+                        let questionAttempts = {};
+                        attemptsSnapshot.forEach(attemptDoc => {
+                            const attempt = attemptDoc.data();
+                            if(!questionAttempts[attempt.level]) questionAttempts[attempt.level] = [];
+                            questionAttempts[attempt.level].push(attempt);
+                        });
+
+                        Object.keys(questionAttempts).sort((a,b) => a-b).forEach(level => {
+                            const attempts = questionAttempts[level];
+                            const correctAttempt = attempts.find(a => a.isCorrect);
+                            contentHTML += `<div class="p-2 rounded-md ${correctAttempt ? 'bg-green-900/50' : 'bg-red-900/50'}"><strong>Pregunta ${level}:</strong> ${correctAttempt ? `Correcta en el intento #${attempts.length}.` : `No la contestó correctamente.`}</div>`;
+                        });
+                        contentHTML += `</div>`;
+                    }
+                }
+                contentHTML += `</div>`;
+            }
+            contentHTML += '</div>';
+            contentArea.innerHTML = contentHTML;
+        }
+        
+        async function setupInitialChallenges() {
+            const challengesRef = collection(db, `artifacts/${appId}/public/data/challenges`);
+            const snapshot = await getDocs(challengesRef);
+            if (snapshot.empty) {
+                console.log("No initial challenges found. Seeding database...");
+                const quejasChallenge = {
+                    title: "Dominio de Quejas", description: "Demuestra tu conocimiento sobre el proceso de escalamiento de quejas.", gameData: [ { level: 1, title: "Canales de Entrada", question: "¿Cuál NO es un canal oficial para recibir quejas?", answer: "WhatsApp", options: ["WhatsApp", "Facebook", "App Móvil", "Oficios CONDUSEF"], points: 100 }, { level: 2, title: "El Primer Contacto", question: "Una queja es una 'Expresión de...'", answer: "Insatisfacción", options: ["Insatisfacción", "Duda", "Agradecimiento", "Sugerencia"], points: 100 }, { level: 3, title: "El Filtro Inicial", question: "Si un folio es una consulta, debe ser...", answer: "Re-tipificado", options: ["Re-tipificado", "Cerrado", "Escalado", "Archivado"], points: 100 }, { level: 4, title: "Faltas Graves", question: "Prestar tu número de promotor es una...", answer: "Falta Grave", options: ["Falta Grave", "Falta Leve", "Llamada de atención", "Práctica común"], points: 100 }, { level: 5, title: "Análisis del Caso", question: "¿Cuál es el primer paso del procedimiento?", answer: "Análisis del caso", options: ["Análisis del caso", "Llamar al cliente", "Agendar cita", "Enviar correo"], points: 100 }, { level: 6, title: "Comunicación", question: "Si no hay contacto telefónico, el folio pasa a estatus...", answer: "Pendiente Cliente", options: ["Pendiente Cliente", "Resuelto", "En Proceso", "Cancelado"], points: 100 }, { level: 7, title: "Notificación Interna", question: "El correo de notificación se envía al Coordinador Regional y en CC a su...", answer: "Gerente Comercial", options: ["Gerente Comercial", "Subdirector Comercial", "Asesor Previsional", "Director General"], points: 100 }, { level: 8, title: "Protocolo Especial", question: "En queja de adulto mayor, ¿a qué Gerencia se copia?", answer: "Gerencia de Pensiones", options: ["Gerencia de Pensiones", "Unidad Especializada", "Gerencia de Oficios", "Recursos Humanos"], points: 100 }, { level: 9, title: "Cierre del Ciclo", question: "El último paso del proceso es...", answer: "Cierre del Folio CRM", options: ["Cierre del Folio CRM", "Monitoreo del Servicio", "Llamada de seguimiento", "Enviar encuesta"], points: 100 }, { level: 10, title: "Diálogo Correcto", question: "En la disculpa, si no es suficiente, se ofrece...", answer: "Agendar nueva cita", options: ["Agendar nueva cita", "Un descuento", "Un bono", "Cancelar el trámite"], points: 100 }]
+                };
+                await setDoc(doc(db, `artifacts/${appId}/public/data/challenges`, "quejas-v1"), quejasChallenge);
+            }
+        }
+        
+        onAuthStateChanged(auth, user => {
+            if (user) {
+                setupInitialChallenges().then(launchPortal);
+            } else {
+                signInAnonymously(auth).catch(err => { console.error("Auth Error:", err); appContainer.innerHTML = "Error de autenticación."; });
+            }
+        });
+
+        // --- MÓDULO DEL JUEGO COMPLETO ---
+        class GameModule {
+            constructor(container, challenge, user, onFinish) { this.container = container; this.challenge = challenge; this.user = user; this.onFinish = onFinish; this.auth = getAuth(); this.db = getFirestore(); this.currentPlayerId = this.auth.currentUser.uid; this.selectedAvatar = AVATARS[0]; this.selectedColor = COLORS[0]; this.currentRoomId = null; this.unsubscribeRoom = null; this.unsubscribePlayers = null; this.unsubscribeLeaderboard = null; this.timerInterval = null; this.synth = null; this.sounds = null; this.music = {}; this.mistakesMade = 0; this.fastAnswerStreak = 0; this.handleGameClick = this.handleGameClick.bind(this); }
+            async start() { this.container.innerHTML = this.getRoomSelectionHTML(); this.initProfileSelectors(); this.container.addEventListener('click', this.handleGameClick); await this.initializeSounds(); this.playLobbyMusic(); }
+            cleanup() { if(this.unsubscribeRoom) this.unsubscribeRoom(); if(this.unsubscribePlayers) this.unsubscribePlayers(); if(this.unsubscribeLeaderboard) this.unsubscribeLeaderboard(); if(this.timerInterval) clearInterval(this.timerInterval); this.container.removeEventListener('click', this.handleGameClick); this.stopAllMusic(); }
+            handleGameClick(e) { const target = e.target.closest('[data-action]'); if (!target) return; const action = target.dataset.action; switch(action) { case 'create-room': this.createRoom(); break; case 'join-room': this.joinRoom(); break; case 'back-to-dashboard': this.cleanup(); this.onFinish(); break; case 'start-game': this.startGameForEveryone(); break; case 'copy-room-id': navigator.clipboard.writeText(this.currentRoomId); break; case 'select-option': this.checkAnswer(target.dataset.option, target); break; case 'download-certificate': this.downloadCertificate(); break; case 'close-certificate': this.container.innerHTML = `<div class="text-center"><h2 class="text-2xl font-bold text-cyan-400">¡Bien hecho!</h2><p class="text-gray-400">Esperando que los demás jugadores terminen...</p></div>`; break; case 'play-again': this.cleanup(); this.onFinish(); break; } }
+            initProfileSelectors() {
+                const avatarContainer = document.getElementById('avatar-container');
+                AVATARS.forEach((avatar, index) => {
+                    const div = document.createElement('div');
+                    div.textContent = avatar;
+                    div.className = 'avatar-selector text-4xl';
+                    if (index === 0) div.classList.add('selected');
+                    div.onclick = () => {
+                        avatarContainer.querySelector('.selected').classList.remove('selected');
+                        div.classList.add('selected');
+                        this.selectedAvatar = avatar;
+                    };
+                    avatarContainer.appendChild(div);
+                });
+                const colorContainer = document.getElementById('color-container');
+                COLORS.forEach((color, index) => {
+                    const div = document.createElement('div');
+                    div.className = 'color-selector';
+                    div.style.backgroundColor = color;
+                    if (index === 0) div.classList.add('selected');
+                    div.onclick = () => {
+                        colorContainer.querySelector('.selected').classList.remove('selected');
+                        div.classList.add('selected');
+                        this.selectedColor = color;
+                    };
+                    colorContainer.appendChild(div);
+                });
+            }
+            async createRoom() {
+                await this.initializeSounds();
+                this.sounds.click();
+                this.currentRoomId = Math.random().toString(36).substring(2, 7).toUpperCase();
+                const roomPath = `artifacts/${appId}/public/data/challenges/${this.challenge.id}/rooms/${this.currentRoomId}`;
+                const playerRef = doc(this.db, `${roomPath}/players`, this.currentPlayerId);
+                await setDoc(playerRef, { name: this.user.name, userId: this.currentPlayerId, isHost: true, avatar: this.selectedAvatar, color: this.selectedColor, score: 0, level: 1, completionTimestamp: null });
+                const roomRef = doc(this.db, roomPath);
+                await setDoc(roomRef, { hostId: this.currentPlayerId, status: "waiting", createdAt: serverTimestamp() });
+                this.showLobby(true);
+            }
+            async joinRoom() {
+                await this.initializeSounds();
+                this.sounds.click();
+                const roomId = document.getElementById('room-id-input').value.trim().toUpperCase();
+                if (!roomId) return alert("Ingresa un código de sala.");
+                this.currentRoomId = roomId;
+                const roomPath = `artifacts/${appId}/public/data/challenges/${this.challenge.id}/rooms/${this.currentRoomId}`;
+                const roomRef = doc(this.db, roomPath);
+                const roomDoc = await getDoc(roomRef);
+                if (!roomDoc.exists() || roomDoc.data().status !== 'waiting') return alert("Sala no válida.");
+                const playerRef = doc(this.db, `${roomPath}/players`, this.currentPlayerId);
+                await setDoc(playerRef, { name: this.user.name, userId: this.currentPlayerId, isHost: false, avatar: this.selectedAvatar, color: this.selectedColor, score: 0, level: 1, completionTimestamp: null });
+                this.showLobby(false);
+            }
+            showLobby(isHost) {
+                this.container.innerHTML = this.getLobbyHTML();
+                document.getElementById('room-id-display').textContent = this.currentRoomId;
+                if (isHost) document.getElementById('start-game-button').classList.remove('hidden');
+                else document.getElementById('waiting-for-host').classList.remove('hidden');
+                this.listenToRoomAndPlayers();
+            }
+            listenToRoomAndPlayers() {
+                const roomPath = `artifacts/${appId}/public/data/challenges/${this.challenge.id}/rooms/${this.currentRoomId}`;
+                const playersQuery = query(collection(this.db, `${roomPath}/players`));
+                
+                this.unsubscribePlayers = onSnapshot(playersQuery, (snapshot) => {
+                    const lobbyPlayersList = document.getElementById('lobby-players-list');
+                    if (!lobbyPlayersList) {
+                        if (this.unsubscribePlayers) this.unsubscribePlayers();
+                        return;
+                    }
+                    let finishedCount = 0, playerCount = 0;
+                    lobbyPlayersList.innerHTML = '';
+                    snapshot.forEach(doc => {
+                        playerCount++;
+                        const player = doc.data();
+                        const playerDiv = document.createElement('div');
+                        playerDiv.className = 'flex items-center justify-center gap-3 bg-gray-700 p-2 rounded';
+                        playerDiv.innerHTML = `<span class="text-2xl">${player.avatar}</span> <span style="color:${player.color};" class="font-bold">${player.name} ${player.isHost ? '👑' : ''}</span>`;
+                        lobbyPlayersList.appendChild(playerDiv);
+                        if(player.completionTimestamp) finishedCount++;
+                    });
+                    if(playerCount > 0 && playerCount === finishedCount) this.showFinalReport();
+                });
+                this.unsubscribeRoom = onSnapshot(doc(this.db, roomPath), (doc) => {
+                    if (doc.exists() && doc.data().status === 'playing') {
+                        if (this.unsubscribeRoom) this.unsubscribeRoom();
+                        this.startCountdown();
+                    }
+                });
+            }
+            async startGameForEveryone() {
+                this.sounds.click();
+                const roomPath = `artifacts/${appId}/public/data/challenges/${this.challenge.id}/rooms/${this.currentRoomId}`;
+                const playersQuery = collection(this.db, `${roomPath}/players`);
+                const playersSnapshot = await getDocs(playersQuery);
+                const batch = writeBatch(this.db);
+                playersSnapshot.forEach(playerDoc => {
+                    const playerRef = doc(this.db, `${roomPath}/players`, playerDoc.id);
+                    batch.update(playerRef, { level: 1, score: 0, completionTimestamp: null });
+                });
+                batch.update(doc(this.db, roomPath), { status: 'playing' });
+                await batch.commit();
+            }
+            startCountdown() {
+                this.container.innerHTML = this.getCountdownHTML();
+                let count = 3;
+                document.getElementById('countdown-text').textContent = count;
+                const interval = setInterval(() => {
+                    count--;
+                    if (count > 0) document.getElementById('countdown-text').textContent = count;
+                    else { clearInterval(interval); this.initGame(); }
+                }, 1000);
+            }
+            async initGame() {
+                this.container.innerHTML = this.getGameHTML();
+                this.playGameplayMusic();
+                const playerRef = doc(this.db, `artifacts/${appId}/public/data/challenges/${this.challenge.id}/rooms/${this.currentRoomId}/players`, this.currentPlayerId);
+                const playerDoc = await getDoc(playerRef);
+                const playerData = playerDoc.data();
+                document.getElementById('player-name').textContent = playerData.name;
+                this.loadLevel(playerData.level || 1, playerData.score || 0);
+                this.setupLeaderboardListener();
+            }
+            loadLevel(level, score) {
+                if(this.timerInterval) clearInterval(this.timerInterval);
+                const levelData = this.challenge.gameData.find(l => l.level === level);
+
+                if (!levelData) {
+                    this.showCertificate(score);
+                    return;
+                }
+                this.currentQuestionAttempts = 1;
+                document.getElementById('current-level').textContent = level;
+                document.getElementById('player-score').textContent = score;
+                document.getElementById('challenge-title').textContent = `Nivel ${level}: ${levelData.title}`;
+                document.getElementById('challenge-question').textContent = levelData.question;
+                
+                const optionsContainer = document.getElementById('options-container');
+                optionsContainer.innerHTML = '';
+                const shuffledOptions = [...levelData.options].sort(() => Math.random() - 0.5);
+                shuffledOptions.forEach(optionText => {
+                    const button = document.createElement('button');
+                    button.textContent = optionText;
+                    button.className = 'option-button w-full bg-gray-700 hover:bg-cyan-800 text-white font-semibold py-3 px-4 rounded-lg transition duration-200 border-2 border-transparent';
+                    button.dataset.action = 'select-option';
+                    button.dataset.option = optionText;
+                    optionsContainer.appendChild(button);
+                });
+
+                document.getElementById('feedback').textContent = '';
+                this.startTimer(TIME_PER_QUESTION);
+            }
+            startTimer(duration) {
+                let remainingTime = duration;
+                const timerBar = document.getElementById('timer-bar');
+                const timerText = document.getElementById('timer-text');
+                timerText.textContent = `Tiempo: ${remainingTime}s`;
+                timerBar.style.transition = 'none';
+                timerBar.style.width = '100%';
+                
+                setTimeout(() => {
+                    timerBar.style.transition = `width ${duration}s linear`;
+                    timerBar.style.width = '0%';
+                }, 50);
+
+                this.timerInterval = setInterval(() => {
+                    remainingTime--;
+                    timerText.textContent = `Tiempo: ${remainingTime}s`;
+                    if (remainingTime < 5 && remainingTime > 0 && this.sounds.tick) this.sounds.tick();
+                    if (remainingTime <= 0) {
+                        clearInterval(this.timerInterval);
+                         this.checkAnswer("", null, true);
+                    }
+                }, 1000);
+            }
+            async checkAnswer(selectedAnswer, button, isTimeout = false) { if(this.timerInterval) clearInterval(this.timerInterval); this.sounds.click(); const currentLevel = parseInt(document.getElementById('current-level').textContent); const levelData = this.challenge.gameData.find(l => l.level === currentLevel); const isCorrect = !isTimeout && selectedAnswer.toLowerCase() === levelData.answer.toLowerCase(); const feedbackEl = document.getElementById('feedback'); document.querySelectorAll('[data-action="select-option"]').forEach(btn => btn.disabled = true); let remainingTimeOnCorrect = 0; if (isTimeout) { feedbackEl.textContent = '¡Se acabó el tiempo!'; this.sounds.incorrect(); this.fastAnswerStreak = 0; this.mistakesMade++; } else if (isCorrect) { button.classList.add('correct'); feedbackEl.textContent = '¡Correcto!'; this.sounds.correct(); remainingTimeOnCorrect = parseInt(document.getElementById('timer-text').textContent.split(' ')[1] || 0); if (remainingTimeOnCorrect > (TIME_PER_QUESTION - 7)) { this.fastAnswerStreak++; } else { this.fastAnswerStreak = 0; } } else { button.classList.add('incorrect'); feedbackEl.textContent = 'Incorrecto. ¡Prueba otra vez!'; this.sounds.incorrect(); this.fastAnswerStreak = 0; this.mistakesMade++; } const attemptData = { level: currentLevel, question: levelData.question, selectedAnswer: isTimeout ? "TIEMPO AGOTADO" : selectedAnswer, isCorrect: isCorrect, attemptNumber: this.currentQuestionAttempts, timestamp: serverTimestamp() }; const attemptsRef = collection(this.db, `artifacts/${appId}/public/data/users/${this.user.id}/challenge_attempts/${this.challenge.id}/attempts`); await addDoc(attemptsRef, attemptData); if (isCorrect || isTimeout) { let pointsEarned = 0; if(isCorrect) { if (this.currentQuestionAttempts === 1) pointsEarned = levelData.points + (remainingTimeOnCorrect * 5); else if (this.currentQuestionAttempts === 2) pointsEarned = Math.floor(levelData.points * 0.5); else if (this.currentQuestionAttempts === 3) pointsEarned = Math.floor(levelData.points * 0.25); else pointsEarned = 10; } const newLevel = currentLevel + 1; const newScore = parseInt(document.getElementById('player-score').textContent) + pointsEarned; const playerRef = doc(this.db, `artifacts/${appId}/public/data/challenges/${this.challenge.id}/rooms/${this.currentRoomId}/players`, this.currentPlayerId); const isFinishing = !this.challenge.gameData.find(l => l.level === newLevel); const updateData = { level: newLevel, score: newScore }; if (isFinishing) { updateData.completionTimestamp = serverTimestamp(); } await updateDoc(playerRef, updateData); if (isFinishing) { await this.checkAndGrantAchievements(newScore); } else { await this.checkAndGrantAchievements(); } setTimeout(() => this.loadLevel(newLevel, newScore), 2000); } else { this.currentQuestionAttempts++; setTimeout(() => { document.querySelectorAll('[data-action="select-option"]').forEach(btn => { if (!btn.classList.contains('incorrect')) btn.disabled = false; }); this.startTimer(REDUCED_TIME_PER_QUESTION); }, 2000); } }
+            async saveCertificate() { const certRef = doc(db, `artifacts/${appId}/public/data/users/${this.user.id}/certificates`, this.challenge.id); await setDoc(certRef, { challengeId: this.challenge.id, challengeTitle: this.challenge.title, completedAt: serverTimestamp() }); }
+            async showCertificate(score) { await this.saveCertificate(); this.container.innerHTML = this.getCertificateHTML(score); }
+            downloadCertificate() { html2canvas(document.querySelector("#certificate-content"), { useCORS: true }).then(canvas => { const link = document.createElement('a'); link.download = `certificado-${this.challenge.id}.png`; link.href = canvas.toDataURL(); link.click(); }); }
+            async showFinalReport() { if (this.unsubscribePlayers) this.unsubscribePlayers(); if (this.unsubscribeRoom) this.unsubscribeRoom(); if (this.unsubscribeLeaderboard) this.unsubscribeLeaderboard(); this.stopAllMusic(); if(this.sounds.win) this.sounds.win(); this.container.innerHTML = this.getFinalReportHTML(); this.startConfetti(); const playersQuery = query(collection(this.db, `artifacts/${appId}/public/data/challenges/${this.challenge.id}/rooms/${this.currentRoomId}/players`), orderBy("score", "desc")); const snapshot = await getDocs(playersQuery); const players = snapshot.docs.map(doc => doc.data()); const podiumElements = { first: document.getElementById('podium-first'), second: document.getElementById('podium-second'), third: document.getElementById('podium-third') }; Object.values(podiumElements).forEach(el => el.innerHTML = ''); const finalRankingsList = document.getElementById('final-rankings-list'); finalRankingsList.innerHTML = ''; players.forEach((player, index) => { const rank = index + 1; if (rank <= 3) { let podiumEl, emoji; if (rank === 1) { podiumEl = podiumElements.first; emoji = '👑'; } if (rank === 2) { podiumEl = podiumElements.second; emoji = '🥈'; } if (rank === 3) { podiumEl = podiumElements.third; emoji = '🥉'; } podiumEl.innerHTML = `<div class="text-6xl">${player.avatar}</div><p class="font-bold text-2xl" style="color: ${player.color};">${player.name}</p><p class="text-xl font-semibold">${player.score} pts</p><p class="text-5xl font-bold" style="color: ${rank === 1 ? '#FFD700' : rank === 2 ? '#C0C0C0' : '#CD7F32'}">${emoji}</p>`; } finalRankingsList.innerHTML += `<li class="flex items-center justify-between bg-gray-700 p-3 rounded-lg"><div class="flex items-center gap-3"><span class="font-bold text-lg w-6 text-center">${rank}.</span><span class="text-3xl">${player.avatar}</span><span class="font-semibold text-lg" style="color: ${player.color};">${player.name}</span></div><span class="font-bold text-xl">${player.score} pts</span></li>`; }); }
+            setupLeaderboardListener() { const q = query(collection(this.db, `artifacts/${appId}/public/data/challenges/${this.challenge.id}/rooms/${this.currentRoomId}/players`), orderBy("score", "desc")); this.unsubscribeLeaderboard = onSnapshot(q, (snapshot) => { const leaderboardEl = document.getElementById('leaderboard'); if (!leaderboardEl) return; leaderboardEl.innerHTML = ''; snapshot.docs.forEach((doc, index) => { const player = doc.data(); const isCurrentUser = player.userId === this.currentPlayerId; let emoji = index === 0 ? '🥇' : (index === 1 ? '🥈' : (index === 2 ? '🥉' : '')); leaderboardEl.innerHTML += `<li class="flex justify-between items-center p-3 rounded-lg ${isCurrentUser ? 'bg-cyan-900 border-2 border-cyan-500' : 'bg-gray-700'}"><div class="flex items-center gap-2"><span class="font-bold text-lg w-8">${emoji || index + 1}</span><span class="text-2xl">${player.avatar}</span><span class="font-semibold">${player.name}</span></div><div class="text-right"><span class="font-bold text-cyan-400">${player.score} pts</span><span class="text-xs text-gray-400 block">Nivel ${player.level}</span></div></li>`; }); }); }
+            async initializeSounds() { if(this.synth) return; try { await Tone.start(); this.synth = new Tone.PolySynth().toDestination(); this.sounds = { click: () => this.synth.triggerAttackRelease("C4", "8n", Tone.now()), correct: () => this.synth.triggerAttackRelease(["C5", "E5", "G5"], "8n", Tone.now()), incorrect: () => this.synth.triggerAttackRelease("F#3", "8n", Tone.now()), win: () => this.synth.triggerAttackRelease(["C5", "E5", "G5", "C6"], "4n", Tone.now()), tick: () => new Tone.MembraneSynth().toDestination().triggerAttackRelease("C1", "8n", Tone.now()) }; this.music.lobby = new Tone.Loop(time => { this.synth.triggerAttackRelease("C4", "8n", time); this.synth.triggerAttackRelease("G4", "8n", time + 0.5); this.synth.triggerAttackRelease("E4", "8n", time + 1); }, "2n").start(0); const gameSynth = new Tone.AMSynth().toDestination(); this.music.game = new Tone.Loop(time => { gameSynth.triggerAttackRelease("C2", "16n", time); }, "16n").start(0); Tone.Transport.bpm.value = 120; } catch (e) { console.warn("Could not start audio context.", e); this.sounds = { click: ()=>{}, correct: ()=>{}, incorrect: ()=>{}, win: ()=>{}, tick: ()=>{} }; } }
+            startConfetti() { const canvas = document.getElementById('confetti-canvas'); if (!canvas) return; const ctx = canvas.getContext('2d'); canvas.width = window.innerWidth; canvas.height = window.innerHeight; let particles = []; const particleCount = 200; const colors = [BRAND_BLUE, BRAND_YELLOW, "#ffffff"]; for (let i = 0; i < particleCount; i++) { particles.push({ x: Math.random() * canvas.width, y: Math.random() * canvas.height - canvas.height, speed: Math.random() * 3 + 2, size: Math.random() * 8 + 4, color: colors[Math.floor(Math.random() * colors.length)], spin: Math.random() * Math.PI * 2, spinSpeed: (Math.random() - 0.5) * 0.1 }); } let animationFrameId; function animate() { ctx.clearRect(0, 0, canvas.width, canvas.height); particles.forEach(p => { p.y += p.speed; p.x += Math.sin(p.y * 0.1) * 2; p.spin += p.spinSpeed; ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.spin); ctx.fillStyle = p.color; ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size); ctx.restore(); if (p.y > canvas.height) { p.y = -20; p.x = Math.random() * canvas.width; } }); animationFrameId = requestAnimationFrame(animate); } animate(); setTimeout(() => cancelAnimationFrame(animationFrameId), 5000); }
+            playLobbyMusic() { if(this.music.lobby) { Tone.Transport.start(); this.music.game.mute = true; this.music.lobby.mute = false; } }
+            playGameplayMusic() { if(this.music.game) { Tone.Transport.start(); this.music.lobby.mute = true; this.music.game.mute = false; } }
+            stopAllMusic() { if(Tone.Transport.state === 'started') { Tone.Transport.stop(); } }
+            getRoomSelectionHTML() { return `<div id="room-selection-view" class="w-full max-w-lg text-center"><button data-action="back-to-dashboard" class="absolute top-4 left-4 bg-gray-600 hover:bg-gray-700 p-2 rounded-full text-white">‹</button><div class="bg-gray-800 p-8 rounded-2xl shadow-2xl"><h1 class="text-3xl font-bold" style="color: ${BRAND_YELLOW};">${this.challenge.title}</h1><p class="text-gray-300 mb-6">Elige tu avatar y color para este desafío.</p><div class="mb-4"><p class="text-gray-400 mb-2">Elige tu avatar:</p><div id="avatar-container" class="flex justify-center gap-2 flex-wrap"></div></div><div class="mb-6"><p class="text-gray-400 mb-2">Elige tu color:</p><div id="color-container" class="flex justify-center gap-2"></div></div><button data-action="create-room" class="w-full bg-cyan-500 hover:bg-cyan-600 text-gray-900 font-bold py-3 px-4 rounded-lg mb-4">Crear Sala Nueva</button><div class="flex items-center space-x-2"><input type="text" id="room-id-input" placeholder="Código de la sala" class="w-2/3 bg-gray-700 text-white px-4 py-3 rounded-lg border-2 border-gray-600"><button data-action="join-room" class="w-1/3 bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg">Unirse</button></div></div></div>`; }
+            getLobbyHTML() { return `<div id="lobby-view" class="w-full max-w-lg text-center"><div class="bg-gray-800 p-8 rounded-2xl shadow-2xl"><p class="text-gray-400">Código de la Sala:</p><div class="flex justify-center items-center gap-2 my-2"><h2 id="room-id-display" class="text-4xl font-bold" style="color: ${BRAND_YELLOW};"></h2><button data-action="copy-room-id" class="p-2 bg-gray-700 hover:bg-gray-600 rounded-lg" title="Copiar código"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M4 1.5H3a2 2 0 0 0-2 2V14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V3.5a2 2 0 0 0-2-2h-1v1h1a1 1 0 0 1 1 1V14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1h1v-1z"/><path d="M9.5 1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1-.5-.5v-1a.5.5 0 0 1 .5-.5h3zm-3-1A1.5 1.5 0 0 0 5 1.5v1A1.5 1.5 0 0 0 6.5 4h3A1.5 1.5 0 0 0 11 2.5v-1A1.5 1.5 0 0 0 9.5 0h-3z"/></svg></button></div><p class="text-cyan-400 mb-6">Comparte este código para que otros se unan.</p><h3 class="text-xl font-semibold mb-4">Jugadores en la sala:</h3><div id="lobby-players-list" class="space-y-2 min-h-[100px] bg-gray-900 p-4 rounded-lg"></div><button id="start-game-button" data-action="start-game" class="hidden mt-6 w-full font-bold py-3 px-4 rounded-lg" style="background-color: ${BRAND_YELLOW}; color: ${BRAND_BLUE};">¡Comenzar Juego!</button><p id="waiting-for-host" class="hidden mt-6 text-gray-400">Esperando que el anfitrión inicie el juego...</p></div></div>`; }
+            getCountdownHTML() { return `<div id="countdown-overlay" class="fixed inset-0 bg-gray-900/90 flex items-center justify-center z-50"><h1 id="countdown-text" class="text-9xl font-bold" style="color: ${BRAND_YELLOW};"></h1></div>`; }
+            getGameHTML() { return `<div id="game-view" class="w-full max-w-4xl"><div class="grid grid-cols-1 lg:grid-cols-3 gap-6"><div class="lg:col-span-2 bg-gray-800 p-8 rounded-2xl shadow-2xl"><div class="mb-4"><div class="flex justify-between items-center text-lg mb-2"><span id="timer-text" class="font-bold text-cyan-400"></span><span class="font-bold" style="color: ${BRAND_YELLOW};">Nivel <span id="current-level">1</span>/${this.challenge.gameData.length}</span></div><div class="timer-bar-container"><div id="timer-bar" class="timer-bar"></div></div></div><div id="game-content" class="bg-gray-900 p-6 rounded-lg min-h-[200px] flex flex-col justify-center"><h3 class="text-xl font-bold mb-4" id="challenge-title"></h3><p class="text-gray-300 text-lg" id="challenge-question"></p></div><div id="options-container" class="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4"></div><p id="feedback" class="mt-4 text-center font-semibold h-6"></p></div><div class="bg-gray-800 p-8 rounded-2xl shadow-2xl"><div class="flex justify-between items-center mb-6"><div><h2 class="text-xl font-semibold">Jugador:</h2><p id="player-name" class="text-2xl font-bold" style="color: ${BRAND_YELLOW};"></p></div><div><h2 class="text-xl font-semibold text-right">Puntaje:</h2><p id="player-score" class="font-bold text-2xl text-green-400 text-right">0</p></div></div><h3 class="text-2xl font-bold text-center mb-4" style="color: ${BRAND_YELLOW};">🏆 Ranking en Vivo 🏆</h3><ol id="leaderboard" class="space-y-3"></ol></div></div></div>`; }
+            getCertificateHTML(score) { return `<div id="certificate-modal" class="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center p-4 z-40"><div id="certificate-content" class="bg-white text-gray-800 p-10 rounded-lg shadow-2xl text-center max-w-2xl w-full" style="border: 8px solid ${BRAND_BLUE};"><img src="${LOGO_URL_CERTIFICATE}" alt="Logo de la Empresa" class="mx-auto h-12 mb-4" crossorigin="anonymous"><h2 class="text-4xl font-bold text-gray-700 mb-2" style="font-family: 'Times New Roman', serif;">Certificado de Finalización</h2><div class="w-1/3 h-1 mx-auto mb-4" style="background-color: ${BRAND_YELLOW};"></div><p class="text-lg text-gray-500 mb-8">Otorgado a:</p><p class="text-5xl font-bold mb-8" style="font-family: 'Brush Script MT', cursive; color: ${BRAND_BLUE};">${this.user.name}</p><p class="text-gray-600 mb-4">Por completar exitosamente la capacitación interactiva:</p><p class="text-xl font-semibold text-gray-800 mb-10">"${this.challenge.title}"</p><div class="flex justify-between items-center"><p class="text-sm text-gray-500">${new Date().toLocaleDateString()}</p><p class="text-sm font-bold" style="color: ${BRAND_BLUE};">Portal de Desafíos</p></div></div><div class="mt-4 flex gap-4"><button data-action="download-certificate" class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-6 rounded-lg transition">Descargar</button><button data-action="close-certificate" class="font-bold py-2 px-6 rounded-lg transition" style="background-color: ${BRAND_BLUE}; color: ${BRAND_YELLOW};">Cerrar</button></div></div>`; }
+            getFinalReportHTML() { return `<div id="final-report-view" class="w-full max-w-2xl text-center"><h1 class="text-5xl font-bold" style="color: ${BRAND_YELLOW};">¡Partida Finalizada!</h1><div class="flex justify-center items-end gap-4 my-12 h-64"><div id="podium-second" class="podium-item second order-2 flex flex-col items-center w-1/3"></div><div id="podium-first" class="podium-item first order-1 flex flex-col items-center w-1/3"></div><div id="podium-third" class="podium-item third order-3 flex flex-col items-center w-1/3"></div></div><div class="bg-gray-800 p-6 rounded-2xl shadow-xl"><h2 class="text-2xl font-bold mb-4" style="color: ${BRAND_YELLOW};">Ranking Final de la Sala</h2><ol id="final-rankings-list" class="space-y-2"></ol></div><button data-action="play-again" class="mt-8 font-bold py-3 px-6 rounded-lg transition" style="background-color: ${BRAND_YELLOW}; color: ${BRAND_BLUE};">Volver al Panel</button></div>`; }
+            async grantAchievement(achievementId) { const achievement = achievements[achievementId]; if (!achievement) return; const achievementRef = doc(db, `artifacts/${appId}/public/data/users/${this.user.id}/achievements`, achievementId); await setDoc(achievementRef, { name: achievement.name, emoji: achievement.emoji, description: achievement.description, earnedAt: serverTimestamp() }); this.showAchievementUnlocked(achievement); }
+            showAchievementUnlocked(achievement) { const notification = document.getElementById('achievement-unlocked'); document.getElementById('achievement-emoji').textContent = achievement.emoji; document.getElementById('achievement-name').textContent = achievement.name; notification.classList.add('show'); setTimeout(() => { notification.classList.remove('show'); }, 4000); }
+            async checkAndGrantAchievements(finalScore = 0){ const userAchievementsRef = collection(db, `artifacts/${appId}/public/data/users/${this.user.id}/achievements`); const userAchievementsSnapshot = await getDocs(userAchievementsRef); const earnedIds = userAchievementsSnapshot.docs.map(doc => doc.id); if (this.fastAnswerStreak >= 3 && !earnedIds.includes('velocista')) { await this.grantAchievement('velocista'); } const isFinishing = !this.challenge.gameData.find(l => l.level === (parseInt(document.getElementById('current-level')?.textContent || '0') + 1)); if (isFinishing) { if (this.mistakesMade === 0 && !earnedIds.includes('precision-absoluta')) { await this.grantAchievement('precision-absoluta'); } if (this.challenge.id === 'quejas-v1' && finalScore > 1200 && !earnedIds.includes('maestro-quejas')) { await this.grantAchievement('maestro-quejas'); } } }
+        }
+    </script>
+</body>
+</html>
+
+
