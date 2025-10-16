@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Portal de Desafíos Dinámicos v8.5</title>
+    <title>Portal de Desafíos Dinámicos v8.7</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -112,9 +112,17 @@
         import { getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, getDocs, orderBy, where, Timestamp, writeBatch, serverTimestamp, addDoc, limit } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- CONFIGURATION ---
-        const firebaseConfig = typeof __firebase_config !== 'undefined' 
-            ? JSON.parse(__firebase_config) : { apiKey: "FALLBACK_KEY", authDomain: "FALLBACK_DOMAIN", projectId: "FALLBACK_PROJECT" };
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-portal-app';
+        const firebaseConfig = {
+          apiKey: "AIzaSyBzDj23rjeO4nQYOU-beGC7aPomfx1krCo",
+          authDomain: "juego-desafios.firebaseapp.com",
+          projectId: "juego-desafios",
+          storageBucket: "juego-desafios.firebasestorage.app",
+          messagingSenderId: "513414920689",
+          appId: "1:513414920689:web:55b5b57ff8c7f53a78ec50",
+          measurementId: "G-DLMT00D4QF"
+        };
+        
+        const appId = firebaseConfig.projectId;
         
         // --- CONSTANTS ---
         const AVATARS = ['👩‍🚀', '👨‍🔬', '👩‍🎨', '👨‍💻', '👩‍✈️', '👨‍🏫', '👩‍🎤', '👨‍🍳', '👩‍🎓', '👨‍⚖️', '👩‍⚕️', '👨‍🚒', '👷‍♀️', '👷‍♂️', '👩‍💼', '👨‍💼', '👩‍🔧', '👨‍🔧', '🕵️‍♀️', '🕵️‍♂️', '👮‍♀️', '👮‍♂️'];
@@ -1122,11 +1130,12 @@
         
         const startApp = async () => {
             try {
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
+                // Simplified authentication: Always use anonymous sign-in.
+                // The app's own user logic (employee ID) will handle identity.
+                if (auth.currentUser === null) {
+                     await signInAnonymously(auth);
                 }
+                
                 await setupInitialChallenges();
                 launchPortal();
 
@@ -1145,8 +1154,5 @@
     </script>
 </body>
 </html>
-
-
-
 
 
